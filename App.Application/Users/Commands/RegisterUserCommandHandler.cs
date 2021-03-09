@@ -1,4 +1,5 @@
-﻿using System.Threading;
+﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 using App.Application.Configuration.Commands;
 using App.Domain.IRepositories;
@@ -19,13 +20,11 @@ namespace App.Application.Users.Commands
         private readonly IBusinessRule _businessRule;
 
         public RegisterUserCommandHandler(
-            IRepository<User> repository,
             IMapper mapper,
             IUnitOfWork unitOfWork,
             IUserUniquenessChecker uniquenessChecker,
             IBusinessRule businessRule)
         {
-            _repository = repository;
             _mapper = mapper;
             _unitOfWork = unitOfWork;
             _businessRule = businessRule;
@@ -37,8 +36,20 @@ namespace App.Application.Users.Commands
             var user = _mapper.Map<User>(request.User);
             await user.CheckRule(new UserEmailUniqueRule(_uniquenessChecker).SetEmail(user.Email));
 
-            await _repository.Insert(user);
-            await _unitOfWork.CommitAsync(cancellationToken);
+            await using var transaction = await _unitOfWork.BeginTransactionAsync();
+            try
+            {
+                await _unitOfWork.UserRepository.Insert(user);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (Exception e)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+            }
+
+            await transaction.DisposeAsync();
 
             return Unit.Value;
         }

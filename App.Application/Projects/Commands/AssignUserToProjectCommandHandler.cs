@@ -1,4 +1,5 @@
-﻿using System.Threading;
+﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 using App.Application.Configuration.Commands;
 using App.Domain.IRepositories;
@@ -12,24 +13,19 @@ namespace App.Application.Projects.Commands
 {
     public class AssignUserToProjectCommandHandler : ICommandHandler<AssignUserToProjectCommand>
     {
-        private readonly IRepository<Project> _projectRepository;
-        private readonly IRepository<User> _userRepository;
         private readonly IUnitOfWork _unitOfWork;
         private readonly IMapper _mapper;
 
-        public AssignUserToProjectCommandHandler(IRepository<Project> projectRepository,
-            IRepository<User> userRepository, IUnitOfWork unitOfWork, IMapper mapper)
+        public AssignUserToProjectCommandHandler(IUnitOfWork unitOfWork, IMapper mapper)
         {
-            _projectRepository = projectRepository;
-            _userRepository = userRepository;
             _unitOfWork = unitOfWork;
             _mapper = mapper;
         }
 
         public async Task<Unit> Handle(AssignUserToProjectCommand request, CancellationToken cancellationToken)
         {
-            var user = await _userRepository.GetSingle(x => x.Id == request.UserId);
-            var project = await _projectRepository.GetSingle(x => x.Id == request.ProjectId);
+            var user = await _unitOfWork.UserRepository.GetSingle(x => x.Id == request.UserId);
+            var project = await _unitOfWork.ProjectRepository.GetSingle(x => x.Id == request.ProjectId);
 
             if (user is null || project is null)
             {
@@ -37,8 +33,21 @@ namespace App.Application.Projects.Commands
             }
 
             project.AssignUserToProject(user);
-            _projectRepository.Update(project);
-            await _unitOfWork.CommitAsync(cancellationToken);
+
+            await using var transaction = await _unitOfWork.BeginTransactionAsync();
+            try
+            {
+                _unitOfWork.ProjectRepository.Update(project);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (Exception e)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+            }
+
+            await transaction.DisposeAsync();
 
             return Unit.Value;
         }

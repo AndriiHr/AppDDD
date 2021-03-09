@@ -1,7 +1,6 @@
-﻿using App.Application.Configuration.Commands;
-using App.Domain.IRepositories;
+﻿using System;
+using App.Application.Configuration.Commands;
 using App.Domain.SeedWork;
-using App.Domain.Users;
 using AutoMapper;
 using MediatR;
 using System.Threading;
@@ -11,21 +10,31 @@ namespace App.Application.Users.Commands
 {
     public class DeleteUserCommandHandler : ICommandHandler<DeleteUserCommand>
     {
-        private readonly IRepository<User> _repository;
         private readonly IUnitOfWork _unitOfWork;
         private readonly IMapper _mapper;
 
-        public DeleteUserCommandHandler(IRepository<User> repository, IMapper mapper, IUnitOfWork unitOfWork)
+        public DeleteUserCommandHandler(IMapper mapper, IUnitOfWork unitOfWork)
         {
-            _repository = repository;
             _mapper = mapper;
             _unitOfWork = unitOfWork;
         }
 
         public async Task<Unit> Handle(DeleteUserCommand request, CancellationToken cancellationToken)
         {
-            await _repository.Delete(request.Id);
-            await _unitOfWork.CommitAsync(cancellationToken);
+            await using var transaction = await _unitOfWork.BeginTransactionAsync();
+            try
+            {
+                await _unitOfWork.UserRepository.Delete(request.Id);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (Exception e)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+            }
+
+            await transaction.DisposeAsync();
 
             return Unit.Value;
         }

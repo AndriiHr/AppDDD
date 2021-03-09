@@ -15,13 +15,11 @@ namespace App.Application.Projects.Commands
 {
     public class UpdateProjectCommandHandler : ICommandHandler<UpdateProjectCommand>
     {
-        private readonly IRepository<Project> _repository;
         private readonly IUnitOfWork _unitOfWork;
         private readonly IMapper _mapper;
 
-        public UpdateProjectCommandHandler(IRepository<Project> repository, IUnitOfWork unitOfWork, IMapper mapper)
+        public UpdateProjectCommandHandler(IUnitOfWork unitOfWork, IMapper mapper)
         {
-            _repository = repository;
             _unitOfWork = unitOfWork;
             _mapper = mapper;
         }
@@ -29,8 +27,21 @@ namespace App.Application.Projects.Commands
         public async Task<Unit> Handle(UpdateProjectCommand request, CancellationToken cancellationToken)
         {
             var project = _mapper.Map<Project>(request.Project);
-            _repository.Update(project);
-            await _unitOfWork.CommitAsync(cancellationToken);
+
+            await using var transaction = await _unitOfWork.BeginTransactionAsync();
+            try
+            {
+                _unitOfWork.ProjectRepository.Update(project);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (Exception e)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+            }
+
+            await transaction.DisposeAsync();
 
             return Unit.Value;
         }

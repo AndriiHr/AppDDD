@@ -1,9 +1,8 @@
-﻿using System.Threading;
+﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 using App.Application.Configuration.Commands;
 using App.Domain.Feedbacks;
-using App.Domain.IRepositories;
-using App.Domain.Projects;
 using App.Domain.SeedWork;
 using AutoMapper;
 using MediatR;
@@ -12,27 +11,36 @@ namespace App.Application.Feedbacks.Commands
 {
     internal class AssignFeedbackToProjectCommandHandler : ICommandHandler<AssignFeedbackToProjectCommand>
     {
-        private readonly IRepository<Project> _repository;
         private readonly IMapper _mapper;
         private readonly IUnitOfWork _unitOfWork;
 
-        public AssignFeedbackToProjectCommandHandler(IRepository<Project> repository, IMapper mapper,
-            IUnitOfWork unitOfWork)
+        public AssignFeedbackToProjectCommandHandler(IMapper mapper, IUnitOfWork unitOfWork)
         {
-            _repository = repository;
             _mapper = mapper;
             _unitOfWork = unitOfWork;
         }
 
         public async Task<Unit> Handle(AssignFeedbackToProjectCommand request, CancellationToken cancellationToken)
         {
-            var project = await _repository.GetSingle(x=>x.Id == request.ProjectId);
+            var project = await _unitOfWork.ProjectRepository.GetSingle(x => x.Id == request.ProjectId);
             var feedback = _mapper.Map<Feedback>(request.Feedback);
-            
+
             project.AddFeedbackToProject(feedback.Text);
-            
-            _repository.Update(project);
-            await _unitOfWork.CommitAsync(cancellationToken);
+
+            await using var transaction = await _unitOfWork.BeginTransactionAsync();
+            try
+            {
+                _unitOfWork.ProjectRepository.Update(project);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (Exception e)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+            }
+
+            await transaction.DisposeAsync();
 
             return Unit.Value;
         }
